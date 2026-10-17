@@ -1,10 +1,12 @@
-# [Project name]
+# SyncProof
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+SyncProof compares invoice CSV exports from two business systems and flags records for human review.
 
 ## Run & Operate
 
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/syncproof run dev` — run the SyncProof web app
+- `pnpm --filter @workspace/syncproof run typecheck` — typecheck the SyncProof app
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
@@ -22,19 +24,22 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/syncproof/` — SyncProof web app; CSV parsing, invoice comparison, and report export are browser-side.
+- `artifacts/api-server/` and `lib/db/` — shared workspace scaffolding; SyncProof does not use them.
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Uploaded invoice data stays in the browser; do not send files or record contents to an API or external service.
+- Invoice matching uses only trimmed, case-insensitive invoice numbers. Duplicate keys and incomplete rows remain flagged for human review.
+- SyncProof does not connect to accounting systems, request credentials, or modify financial records.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Upload two invoice CSV exports, compare invoice numbers and amounts, inspect matching and flagged records, and download a CSV review report. Fictional sample files are included.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+No financial discrepancy should be presented as proof of an error or loss; flagged records require human review.
 
 ## Gotchas
 

@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "SyncProof"
+description = "A browser-based financial verification tool that compares invoice CSV exports from two business systems, flags discrepancies for human review, and exports reports without sending data externally."
+version = "1.0.0"
+id = "artifacts/syncproof"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21805
+
+[services.development]
+run = "pnpm --filter @workspace/syncproof run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/syncproof", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/syncproof/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21805"
+BASE_PATH = "/"
