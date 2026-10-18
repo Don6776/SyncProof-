@@ -1,4 +1,4 @@
-import { type ChangeEvent, type DragEvent, type ReactNode, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, type DragEvent, type ReactNode, useMemo, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -223,7 +223,6 @@ function Home() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('All results');
   const [dragging, setDragging] = useState<Side | null>(null);
-  const inputs = { A: useRef<HTMLInputElement>(null), B: useRef<HTMLInputElement>(null) };
 
   const processFile = async (side: Side, file?: File) => {
     if (!file) return;
@@ -245,9 +244,11 @@ function Home() {
       setResults(null);
       setErrors((old) => ({ ...old, [side]: error instanceof Error ? error.message : 'Could not read this file. Save it as a UTF-8 CSV and try again.' }));
     }
-    if (inputs[side].current) inputs[side].current.value = '';
   };
-  const handleChange = (side: Side) => (event: ChangeEvent<HTMLInputElement>) => { void processFile(side, event.target.files?.[0]); };
+  const handleChange = (side: Side) => (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    void processFile(side, input.files?.[0]).finally(() => { input.value = ''; });
+  };
   const handleDrop = (side: Side) => (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault(); setDragging(null); void processFile(side, event.dataTransfer.files?.[0]);
   };
@@ -331,10 +332,13 @@ function Home() {
               {(['A', 'B'] as Side[]).map((side) => {
                 const isReady = Boolean(files[side]);
                 return <div key={side} className={`file-card ${isReady ? 'file-card-ready' : ''}`}>
-                  <input ref={inputs[side]} type="file" accept=".csv,text/csv" hidden onChange={handleChange(side)} data-testid={`input-file-${side.toLowerCase()}`} />
+                  <input id={`syncproof-file-${side.toLowerCase()}`} type="file" accept=".csv,text/csv" className="file-input-hidden" onChange={handleChange(side)} data-testid={`input-file-${side.toLowerCase()}`} />
                   <div className="file-card-top"><span className={`file-letter file-letter-${side.toLowerCase()}`}>{side}</span><div><div className="file-source">{side === 'A' ? 'BUSINESS MANAGEMENT' : 'ACCOUNTING'}</div><h3>{side === 'A' ? 'File A' : 'File B'} <span>{side === 'A' ? 'Invoice export' : 'Invoice export'}</span></h3></div><button className="demo-download" onClick={() => demoDownload(side)} aria-label={`Download fictional File ${side} example`} data-testid={`button-download-sample-${side.toLowerCase()}`}><ArrowDownToLine size={15} /><span>Sample CSV</span></button></div>
-                  <div className={`drop-zone ${dragging === side ? 'drop-zone-active' : ''} ${isReady ? 'drop-zone-loaded' : ''}`} onClick={() => inputs[side].current?.click()} onDragOver={(event) => { event.preventDefault(); setDragging(side); }} onDragLeave={() => setDragging(null)} onDrop={handleDrop(side)} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inputs[side].current?.click(); } }} data-testid={`dropzone-file-${side.toLowerCase()}`}>
-                    {isReady ? <><div className="drop-icon loaded-icon"><Check size={18} /></div><div className="drop-copy"><strong data-testid={`status-file-${side.toLowerCase()}`}>{files[side]?.fileName}</strong><span>{files[side]?.count} invoice {files[side]?.count === 1 ? 'record' : 'records'} · Valid CSV structure</span></div><button className="remove-file" onClick={(event) => { event.stopPropagation(); setFiles((old) => ({ ...old, [side]: null })); setResults(null); }} aria-label={`Remove File ${side}`} data-testid={`button-remove-file-${side.toLowerCase()}`}><X size={16} /></button></> : <><div className="drop-icon"><Upload size={17} /></div><div className="drop-copy"><strong>Drop your CSV here <span>or <u>browse files</u></span></strong><span>Comma-separated values · .csv only</span></div><div className="drop-arrow"><ArrowRight size={15} /></div></>}
+                  <div className={`drop-zone ${dragging === side ? 'drop-zone-active' : ''} ${isReady ? 'drop-zone-loaded' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragging(side); }} onDragLeave={() => setDragging(null)} onDrop={handleDrop(side)} data-testid={`dropzone-file-${side.toLowerCase()}`}>
+                    <label htmlFor={`syncproof-file-${side.toLowerCase()}`} className="drop-zone-label">
+                      {isReady ? <><div className="drop-icon loaded-icon"><Check size={18} /></div><div className="drop-copy"><strong data-testid={`status-file-${side.toLowerCase()}`}>{files[side]?.fileName}</strong><span>{files[side]?.count} invoice {files[side]?.count === 1 ? 'record' : 'records'} · Valid CSV structure</span></div><span className="drop-arrow"><ArrowRight size={15} /></span></> : <><div className="drop-icon"><Upload size={17} /></div><div className="drop-copy"><strong>Drop your CSV here <span>or <u>browse files</u></span></strong><span>Comma-separated values · .csv only</span></div><div className="drop-arrow"><ArrowRight size={15} /></div></>}
+                    </label>
+                    {isReady && <button type="button" className="remove-file" onClick={() => { setFiles((old) => ({ ...old, [side]: null })); setResults(null); }} aria-label={`Remove File ${side}`} data-testid={`button-remove-file-${side.toLowerCase()}`}><X size={16} /></button>}
                   </div>
                   {errors[side] && <div className="upload-error" role="alert" data-testid={`error-file-${side.toLowerCase()}`}><CircleAlert size={15} /><span>{errors[side]}</span></div>}
                   <div className="column-hint"><span className="hint-label">REQUIRED COLUMNS</span><span className="mono">invoice_number · customer_name · invoice_date · total_amount</span></div>
@@ -342,7 +346,11 @@ function Home() {
               })}
             </div>
             <div className="compare-row">
-              <div className="privacy-inline"><LockKeyhole size={14} /><span>Files are read and compared locally. No data leaves this browser.</span></div>
+              <div className="compare-guidance">
+                <div className="privacy-inline"><LockKeyhole size={14} /><span>Files are read and compared locally. No data leaves this browser.</span></div>
+                {files.A && !files.B && <div className="upload-next-step" role="status"><Check size={13} />File A is loaded. Choose File B to continue.</div>}
+                {files.A && files.B && <div className="upload-next-step" role="status"><Check size={13} />Both files are ready. You can compare them now.</div>}
+              </div>
               <button className="primary-button" onClick={runComparison} disabled={!files.A || !files.B || loading} data-testid="button-run-comparison">{loading ? <span className="button-skeleton" /> : <><span>Compare invoices</span><ArrowRight size={16} /></>}</button>
             </div>
           </section>

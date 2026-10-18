@@ -150,9 +150,12 @@
 .file-card h3 span { margin-left: 3px; color: #829087; font-size: 10px; font-weight: 400; }
 .demo-download { display: flex; align-items: center; gap: 5px; margin-left: auto; padding: 6px 7px; border: 1px solid #e1e2d9; border-radius: 6px; color: #718078; background: #fbfaf6; font-size: 9px; cursor: pointer; transition: border .17s, color .17s; }
 .demo-download:hover { border-color: #a9c2b6; color: #35675d; }
+.file-input-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.file-input-hidden:focus-visible ~ .drop-zone .drop-zone-label { outline: 2px solid #538579; outline-offset: 2px; }
 .drop-zone { display: flex; align-items: center; gap: 11px; min-height: 68px; margin-top: 14px; padding: 12px; border: 1px dashed #cbd4c9; border-radius: 7px; cursor: pointer; background: #fbfaf6; transition: border .18s, background .18s, transform .18s; }
 .drop-zone:hover, .drop-zone-active { border-color: #5e9284; background: #f1f6ef; }
-.drop-zone:focus-visible { outline: 2px solid #538579; outline-offset: 2px; }
+.drop-zone-label { display: flex; align-items: center; gap: 11px; flex: 1; min-width: 0; min-height: 42px; cursor: pointer; }
+.drop-zone-label:focus-visible { outline: 2px solid #538579; outline-offset: 2px; }
 .drop-zone-loaded { border-style: solid; border-color: #c6d8cd; background: #f5f8f2; }
 .drop-icon { display: grid; place-items: center; width: 33px; height: 33px; flex: 0 0 auto; border-radius: 8px; color: #668177; background: #edf1e9; }
 .loaded-icon { color: #477a68; background: #e2ede2; }
@@ -170,8 +173,11 @@
 .upload-error { display: flex; gap: 7px; align-items: flex-start; margin-top: 9px; padding: 8px 9px; border: 1px solid #ecd2c8; border-radius: 6px; color: #994d41; background: #fbf0e9; font-size: 10px; line-height: 1.5; }
 .upload-error svg { flex: 0 0 auto; margin-top: 1px; }
 .compare-row { display: flex; justify-content: space-between; align-items: center; margin-top: 17px; padding-top: 15px; border-top: 1px solid #e7e7df; }
+.compare-guidance { min-width: 0; }
 .privacy-inline { display: flex; align-items: center; gap: 7px; color: #75847a; font-size: 10px; }
 .privacy-inline svg { color: #668376; }
+.upload-next-step { display: flex; align-items: center; gap: 5px; margin: 5px 0 0 21px; color: #477368; font-size: 10px; font-weight: 600; }
+.upload-next-step svg { flex: 0 0 auto; }
 .primary-button, .outline-button { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; border-radius: 7px; padding: 0 14px; font-size: 11px; font-weight: 600; cursor: pointer; transition: background .17s, transform .17s, border-color .17s; }
 .primary-button { border: 1px solid #2d5e56; color: #f7f7ef; background: #356b61; box-shadow: 0 2px 3px #2c5a521c; }
 .primary-button:hover:not(:disabled) { background: #28594f; transform: translateY(-1px); }
