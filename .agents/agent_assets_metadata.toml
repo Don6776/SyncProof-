@@ -1,0 +1,44 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "uxAGdMHPQb71G8CoOJd4y"
+uri = "file://test-data/syncproof-customer-name-difference-file-a.csv"
+type = "table"
+title = "Download File A CSV"
+description = "SyncProof customer-name mismatch test file — Northstar Cooling."
+logical_id = "ab1c3735-1c7e-47e7-814b-86199305a17e"
+content_hash = "sha256:a718302ae9bbd8ee1ebfa4b4e4b9dbc7da2fcf8e3182177b3c9da33e2109633b"
+size = 98
+mtime_ms = 1792319755777
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f536d6e5-3f34-4e84-8971-2c149f968322/ab1c3735-1c7e-47e7-814b-86199305a17e/36a35122-84c5-40fe-944b-20599e9693c3"
+storage_version_token = "1792320105803633"
+content_type = "text/csv"
+
+[[outputs]]
+id = "ORaWQxhJRDWCw1MDgY1Bf"
+uri = "file://test-data/syncproof-customer-name-difference-file-b.csv"
+type = "table"
+title = "Download File B CSV"
+description = "SyncProof customer-name mismatch test file — Northstar Services."
+logical_id = "805e6c45-3cc4-41ed-8e17-54853ba923fa"
+content_hash = "sha256:698244e1aa33e412b78209529f4f40aee0ff89634f41375f6a6767e05b2e7a7a"
+size = 99
+mtime_ms = 1792319756238
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f536d6e5-3f34-4e84-8971-2c149f968322/805e6c45-3cc4-41ed-8e17-54853ba923fa/2f266acf-b2af-47bf-bb9b-1130af3980be"
+storage_version_token = "1792320106437494"
+content_type = "text/csv"
+
+[[outputs]]
+id = "D_Qn8sadDrS40YPoTrljF"
+uri = "file://test-data/download-syncproof-test-files.html"
+type = "html"
+title = "Download the SyncProof test CSVs"
+description = "Open this page and use its two buttons to download File A and File B as CSVs."
+logical_id = "e93044ec-6680-4832-8048-b26612804d08"
+content_hash = "sha256:600d1eac4944bb4178decda3c79f1701ffad77aae1512f9fa9f85592392951a8"
+size = 2437
+mtime_ms = 1792320265489
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f536d6e5-3f34-4e84-8971-2c149f968322/e93044ec-6680-4832-8048-b26612804d08/be1a79f0-146c-4a9a-9501-0d2fec2c3e4a"
+storage_version_token = "1792320288609777"
+content_type = "text/html"

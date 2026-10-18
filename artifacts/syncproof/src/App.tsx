@@ -10,35 +10,17 @@ import {
   ClipboardList, FileCheck2, FileDown, FileText, Fingerprint, HelpCircle,
   LockKeyhole, Search, ShieldCheck, Sparkles, Upload, X,
 } from 'lucide-react';
+import {
+  compareRows,
+  type RecordRow,
+  type ResultRow,
+  type ResultType,
+  type Side,
+  type UploadData,
+} from './comparison';
 
 const queryClient = new QueryClient();
 const REQUIRED_HEADERS = ['invoice_number', 'customer_name', 'invoice_date', 'total_amount'] as const;
-type Side = 'A' | 'B';
-type RecordRow = {
-  number: string;
-  key: string;
-  customer: string;
-  date: string;
-  cents: number | null;
-  issues: string[];
-  sourceIndex: number;
-};
-type UploadData = { fileName: string; rows: RecordRow[]; count: number };
-type ResultType = 'Matched' | 'Amount differs' | 'Only in A' | 'Only in B' | 'Needs review';
-type IssueCategory = 'matched' | 'amount-difference' | 'missing' | 'duplicate' | 'review';
-type ResultRow = {
-  id: string;
-  issueId: string;
-  category: IssueCategory;
-  number: string;
-  customer: string;
-  dateA: string;
-  dateB: string;
-  a: RecordRow | null;
-  b: RecordRow | null;
-  type: ResultType;
-  explanation: string;
-};
 
 const DEMO_A = `invoice_number,customer_name,invoice_date,total_amount
 INV-1001,Juniper & Slate Studio,2025-04-01,2000.00
@@ -139,8 +121,16 @@ function formatMoney(cents: number | null): string {
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(cents / 100);
 }
 function csvCell(value: string): string { return `"${value.replace(/"/g, '""')}"`; }
-function downloadFile(name: string, contents: string) {
-  const blob = new Blob([contents], { type: 'text/csv;charset=utf-8' });
+function htmlEscape(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character] ?? character);
+}
+function explanationWithoutComparisonSummary(explanation: string): string {
+  return explanation.replace(/^Invoice number: [^.]+\. Amount: [^.]+\. Customer name: [^.]+\.\s*/, '');
+}
+function downloadFile(name: string, contents: string, contentType = 'text/csv;charset=utf-8') {
+  const blob = new Blob([contents], { type: contentType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url; anchor.download = name; anchor.click();
@@ -148,64 +138,6 @@ function downloadFile(name: string, contents: string) {
 }
 function demoDownload(side: Side) {
   downloadFile(side === 'A' ? 'syncproof-fictional-business-invoices.csv' : 'syncproof-fictional-accounting-invoices.csv', side === 'A' ? DEMO_A : DEMO_B);
-}
-
-function compareRows(fileA: UploadData, fileB: UploadData): ResultRow[] {
-  const results: ResultRow[] = [];
-  const groups = (rows: RecordRow[]) => {
-    const map = new Map<string, RecordRow[]>();
-    rows.forEach((record) => {
-      if (!record.key) return;
-      map.set(record.key, [...(map.get(record.key) ?? []), record]);
-    });
-    return map;
-  };
-  const aGroups = groups(fileA.rows);
-  const bGroups = groups(fileB.rows);
-  let serial = 0;
-  const push = (
-    a: RecordRow | null,
-    b: RecordRow | null,
-    type: ResultType,
-    category: IssueCategory,
-    issueId: string,
-    explanation: string,
-    number = a?.number || b?.number || '',
-  ) => {
-    results.push({ id: `result-${serial++}`, issueId, category, number, customer: a?.customer || b?.customer || 'Customer not provided', dateA: a?.date ?? '', dateB: b?.date ?? '', a, b, type, explanation });
-  };
-  const keys = new Set([...aGroups.keys(), ...bGroups.keys()]);
-  for (const key of keys) {
-    const as = aGroups.get(key) ?? [];
-    const bs = bGroups.get(key) ?? [];
-    const issueId = `invoice:${key}`;
-    if (as.length > 1 || bs.length > 1) {
-      const all = [...as.map((record) => ({ side: 'A' as const, record })), ...bs.map((record) => ({ side: 'B' as const, record }))];
-      const explanation = `File A contains ${as.length} record${as.length === 1 ? '' : 's'} with invoice number ${as[0]?.number || bs[0]?.number}, while File B contains ${bs.length}. These records were not matched automatically. A person should review the source records to determine whether the duplication is legitimate. File A source rows: ${as.length ? as.map((record) => record.sourceIndex).join(', ') : 'none'}; File B source rows: ${bs.length ? bs.map((record) => record.sourceIndex).join(', ') : 'none'}.`;
-      all.forEach(({ side, record }) => push(
-        side === 'A' ? record : null, side === 'B' ? record : null, 'Needs review', 'duplicate', issueId,
-        `${explanation} This affected source row is File ${side}, row ${record.sourceIndex}.`,
-      ));
-      continue;
-    }
-    if (as.length === 1 && bs.length === 1) {
-      const a = as[0]; const b = bs[0];
-      if (a.issues.length || b.issues.length) {
-        const details = [a.issues.length ? `File A: ${a.issues.join(' ')}` : '', b.issues.length ? `File B: ${b.issues.join(' ')}` : ''].filter(Boolean).join(' ');
-        push(a, b, 'Needs review', 'review', issueId, `This invoice number is present in both files, but at least one record cannot be compared reliably. File A row ${a.sourceIndex}; File B row ${b.sourceIndex}. ${details}`);
-      } else if (a.cents === b.cents) push(a, b, 'Matched', 'matched', issueId, 'Invoice number and amount agree. Dates are shown as context only and were not compared.');
-      else push(a, b, 'Amount differs', 'amount-difference', issueId, `The amounts differ by ${formatMoney(Math.abs((a.cents ?? 0) - (b.cents ?? 0)))}. File A row ${a.sourceIndex}; File B row ${b.sourceIndex}. A person should review the source records; this difference alone does not establish an error or loss.`);
-    } else {
-      const record = as[0] ?? bs[0];
-      if (!record) continue;
-      const otherIssues = record.issues.length ? ` Also review this record: ${record.issues.join(' ')}` : '';
-      if (as.length) push(record, null, 'Only in A', 'missing', issueId, `No unique invoice with this number was found in File B. File A row ${record.sourceIndex}. Check the export scope and source record.${otherIssues}`);
-      else push(null, record, 'Only in B', 'missing', issueId, `No unique invoice with this number was found in File A. File B row ${record.sourceIndex}. Check the export scope and source record.${otherIssues}`);
-    }
-  }
-  fileA.rows.filter((record) => !record.key).forEach((record) => push(record, null, 'Needs review', 'review', `row:A:${record.sourceIndex}`, record.issues.join(' ') || 'Invoice number is missing, so this record cannot be matched reliably.'));
-  fileB.rows.filter((record) => !record.key).forEach((record) => push(null, record, 'Needs review', 'review', `row:B:${record.sourceIndex}`, record.issues.join(' ') || 'Invoice number is missing, so this record cannot be matched reliably.'));
-  return results;
 }
 
 function App() {
@@ -274,9 +206,10 @@ function Home() {
   const visibleResults = useMemo(() => {
     if (!results) return [];
     return results.filter((row) => {
-      const matchesFilter = filter === 'All results' || (filter === 'Flagged for review' ? row.type !== 'Matched' : row.type === filter);
+      const matchesFilter = filter === 'All results'
+        || (filter === 'Flagged for review' ? row.type !== 'Matched' : filter === 'Customer name differs' ? row.customerNameDifferent : row.type === filter);
       const term = search.trim().toLowerCase();
-      return matchesFilter && (!term || `${row.number} ${row.customer} ${row.explanation} ${row.type}`.toLowerCase().includes(term));
+      return matchesFilter && (!term || `${row.number} ${row.customer} ${row.a?.customer ?? ''} ${row.b?.customer ?? ''} ${row.explanation} ${row.type}`.toLowerCase().includes(term));
     });
   }, [results, filter, search]);
   const groupedResults = useMemo(() => {
@@ -296,10 +229,11 @@ function Home() {
       affectedSourceRows: affectedSourceRows.size,
       matched: groupedResults.filter(({ rows }) => rows[0]?.category === 'matched').length,
       amountDifferences: groupedResults.filter(({ rows }) => rows[0]?.category === 'amount-difference').length,
+      customerNameDifferences: groupedResults.filter(({ rows }) => rows.some((row) => row.customerNameDifferent)).length,
       missingRecords: groupedResults.filter(({ rows }) => rows[0]?.category === 'missing').length,
       duplicateInvoices: groupedResults.filter(({ rows }) => rows[0]?.category === 'duplicate').length,
       needsReview: groupedResults.filter(({ rows }) => rows.some((row) =>
-        row.type === 'Needs review' || Boolean(row.a?.issues.length) || Boolean(row.b?.issues.length),
+        row.type === 'Needs review' || row.customerNameDifferent || Boolean(row.a?.issues.length) || Boolean(row.b?.issues.length),
       )).length,
       flaggedRows: (results ?? []).filter((row) => row.type !== 'Matched').length,
       fileARecords: files.A?.count ?? 0,
@@ -312,71 +246,199 @@ function Home() {
     const flagged = results.filter((row) => row.type !== 'Matched');
     const amountForCsv = (cents: number | null) => cents === null ? '' : (cents / 100).toFixed(2);
     const lines = flagged.map((row) => [
-      row.number, row.customer, row.a ? amountForCsv(row.a.cents) : '', row.b ? amountForCsv(row.b.cents) : '',
+      row.number, row.customerNameDifferent && row.a && row.b ? `File A: ${row.a.customer}; File B: ${row.b.customer}` : row.customer, row.a ? amountForCsv(row.a.cents) : '', row.b ? amountForCsv(row.b.cents) : '',
       row.type, row.explanation, row.a ? String(row.a.sourceIndex) : '', row.b ? String(row.b.sourceIndex) : '', row.dateA, row.dateB,
     ].map((value) => csvCell(value)).join(','));
     downloadFile('syncproof-discrepancy-review.csv', [cols.join(','), ...lines].join('\r\n'));
   };
   const downloadSimpleReport = () => {
     if (!results) return;
-    const columns = ['section', 'summary_item', 'value', 'invoice_number', 'customer_name', 'result', 'file_a_amount', 'file_b_amount', 'difference', 'plain_english_explanation'];
-    const summaryRows = [
-      ['Summary', 'Files compared', `File A: ${counts.fileARecords} records; File B: ${counts.fileBRecords} records`, '', '', '', '', '', '', 'Amounts are shown in the same units as the source exports.'],
-      ['Summary', 'Successfully matched invoices', String(counts.matched), '', '', '', '', '', '', 'Invoice number and amount agree in both files.'],
-      ['Summary', 'Amount differences', String(counts.amountDifferences), '', '', '', '', '', '', 'Each invoice number is counted once.'],
-      ['Summary', 'Missing records', String(counts.missingRecords), '', '', '', '', '', '', 'Invoices found in only one file.'],
-      ['Summary', 'Duplicate invoices', String(counts.duplicateInvoices), '', '', '', '', '', '', 'Each duplicated invoice number is counted once.'],
-      ['Summary', 'Records requiring further investigation', String(counts.needsReview), '', '', '', '', '', '', 'Includes duplicate invoices; the category counts can overlap.'],
-      ['Summary', 'Unique invoice issues', String(counts.uniqueIssues), '', '', '', '', '', '', 'Each invoice number is counted once, even when multiple source rows are affected.'],
-      ['Summary', 'Affected source rows', String(counts.affectedSourceRows), '', '', '', '', '', '', 'Counts the individual File A and File B rows involved in flagged issues.'],
-      ['Summary', 'Review reminder', '', '', '', '', '', '', '', 'Flagged items need human review. They do not prove an error, financial loss, or fraud.'],
-    ];
     const uniqueRecords = (rows: ResultRow[], side: 'a' | 'b') => {
       const records = new Map<number, RecordRow>();
       rows.forEach((row) => { const record = row[side]; if (record) records.set(record.sourceIndex, record); });
       return Array.from(records.values());
     };
-    const amountList = (records: RecordRow[]) => records.map((record) => record.cents === null ? 'Unreadable amount' : (record.cents / 100).toFixed(2)).join('; ');
-    const plainExplanation = (rows: ResultRow[]) => {
+    const reportMoney = (cents: number | null | undefined) => cents === null || cents === undefined ? 'Not provided or unreadable' : `$${formatMoney(cents)}`;
+    const recordsMoney = (records: RecordRow[]) => records.length ? records.map((record) => reportMoney(record.cents)).join('; ') : '—';
+    const customerNames = (aRecords: RecordRow[], bRecords: RecordRow[], fallback: string) =>
+      Array.from(new Set([...aRecords, ...bRecords].map((record) => record.customer).filter(Boolean))).join(' / ') || fallback || 'Customer not provided';
+    const reportGroups = groupedResults.map(({ issueId, rows }) => ({ issueId, rows, result: rows[0] })).filter((group) => group.result);
+    const amountDifferenceGroups = reportGroups.filter(({ result }) => result?.category === 'amount-difference');
+    const customerNameDifferenceGroups = reportGroups.filter(({ rows }) => rows.some((row) => row.customerNameDifferent));
+    const missingGroups = reportGroups.filter(({ result }) => result?.category === 'missing');
+    const duplicateGroups = reportGroups.filter(({ result }) => result?.category === 'duplicate');
+    const matchedGroups = reportGroups.filter(({ result }) => result?.category === 'matched');
+    const reviewGroups = reportGroups.filter(({ result }) => result?.category === 'review');
+
+    const renderTable = (headers: string[], rows: string[][], emptyMessage: string) => `
+      <div class="table-wrap"><table><thead><tr>${headers.map((header) => `<th>${htmlEscape(header)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.length
+        ? rows.map((row) => {
+          const primaryCells = row.slice(0, headers.length);
+          const detailCells = row.slice(headers.length);
+          const detailLabels = ['What this means', 'Recommended next step'];
+          const details = detailCells.map((cell, index) => `<div class="detail-note"><strong>${htmlEscape(detailLabels[index] ?? 'Additional details')}</strong><span>${htmlEscape(cell)}</span></div>`).join('');
+          return `<tr>${primaryCells.map((cell) => `<td>${htmlEscape(cell)}</td>`).join('')}</tr>${details ? `<tr class="detail-row"><td colspan="${headers.length}"><div class="detail-grid">${details}</div></td></tr>` : ''}`;
+        }).join('')
+        : `<tr><td class="empty-cell" colspan="${headers.length}">${htmlEscape(emptyMessage)}</td></tr>`}
+      </tbody></table></div>`;
+    const renderSection = (title: string, description: string, headers: string[], rows: string[][], emptyMessage: string) => `
+      <section class="report-section">
+        <div class="section-heading"><div><p class="eyebrow">INVOICE DETAILS</p><h2>${htmlEscape(title)}</h2><p class="section-description">${htmlEscape(description)}</p></div><span class="section-count">${rows.length}</span></div>
+        ${renderTable(headers, rows, emptyMessage)}
+      </section>`;
+
+    const amountDifferenceRows = amountDifferenceGroups.map(({ rows }) => {
       const row = rows[0];
-      if (!row) return '';
-      if (row.category === 'matched') return 'The invoice number and amount agree in both files. Dates are not compared.';
-      if (row.category === 'duplicate') {
-        const aCount = uniqueRecords(rows, 'a').length;
-        const bCount = uniqueRecords(rows, 'b').length;
-        return `File A contains ${aCount} record${aCount === 1 ? '' : 's'} with invoice number ${row.number}, while File B contains ${bCount}. These records were not matched automatically. A person should review them to determine whether the duplication is legitimate.`;
-      }
-      if (row.category === 'amount-difference' && row.a?.cents !== null && row.a?.cents !== undefined && row.b?.cents !== null && row.b?.cents !== undefined) {
-        const difference = Math.abs(row.a.cents - row.b.cents);
-        const higher = row.a.cents > row.b.cents ? 'File A is higher' : 'File B is higher';
-        return `File A lists ${formatMoney(row.a.cents)} and File B lists ${formatMoney(row.b.cents)}. The difference is ${formatMoney(difference)}; ${higher}. A person should compare the source records. This difference alone does not prove an error or loss.`;
-      }
-      if (row.category === 'missing') {
-        return row.type === 'Only in A'
-          ? 'This invoice appears in File A but not File B. Check that both exports cover the same period and that the invoice is recorded in both systems.'
-          : 'This invoice appears in File B but not File A. Check that both exports cover the same period and that the invoice is recorded in both systems.';
-      }
-      return `This invoice could not be compared reliably. ${row.explanation} A person should review the source records.`;
-    };
-    const invoiceRows = groupedResults.map(({ rows }) => {
+      const a = uniqueRecords(rows, 'a')[0] ?? row.a;
+      const b = uniqueRecords(rows, 'b')[0] ?? row.b;
+      const difference = a?.cents !== null && a?.cents !== undefined && b?.cents !== null && b?.cents !== undefined
+        ? Math.abs(a.cents - b.cents) : null;
+      const direction = a?.cents !== null && a?.cents !== undefined && b?.cents !== null && b?.cents !== undefined
+        ? (a.cents > b.cents ? 'File A is higher' : 'File B is higher') : 'Compare the source amounts';
+      return [
+        row.number || 'Invoice number unavailable',
+        customerNames(a ? [a] : [], b ? [b] : [], row.customer),
+        reportMoney(a?.cents),
+        reportMoney(b?.cents),
+        reportMoney(difference),
+        `The two files show different amounts. ${direction}. This difference alone does not confirm an error.`,
+        'Compare the original invoice with both source records. Ask the responsible person to confirm the correct amount before making any changes.',
+      ];
+    });
+    const customerNameDifferenceRows = customerNameDifferenceGroups.map(({ rows }) => {
+      const row = rows[0];
+      const a = uniqueRecords(rows, 'a')[0] ?? row.a;
+      const b = uniqueRecords(rows, 'b')[0] ?? row.b;
+      return [
+        row.number || 'Invoice number unavailable',
+        a?.customer || 'Customer name not provided',
+        b?.customer || 'Customer name not provided',
+        row.comparison.invoiceNumber,
+        row.comparison.amount,
+        row.comparison.customerName,
+        explanationWithoutComparisonSummary(row.explanation),
+        'Check the original invoice or customer records with the responsible person. Confirm whether both names refer to the same customer; do not assume either entry is wrong.',
+      ];
+    });
+    const missingRows = missingGroups.map(({ rows }) => {
+      const row = rows[0];
+      const record = row.a ?? row.b;
+      const foundIn = row.a ? 'File A' : 'File B';
+      const missingFrom = row.a ? 'File B' : 'File A';
+      return [
+        row.number || 'Invoice number unavailable',
+        record?.customer || row.customer || 'Customer not provided',
+        foundIn,
+        reportMoney(record?.cents),
+        `This invoice appears in ${foundIn}, but no corresponding invoice number appears in ${missingFrom}.`,
+        `Check that both files cover the same dates and filters. Then check the original records to confirm whether this invoice should appear in ${missingFrom}.`,
+      ];
+    });
+    const duplicateRows = duplicateGroups.map(({ rows }) => {
       const row = rows[0];
       const aRecords = uniqueRecords(rows, 'a');
       const bRecords = uniqueRecords(rows, 'b');
-      const customerNames = Array.from(new Set([...aRecords, ...bRecords].map((record) => record.customer).filter(Boolean)));
-      const status = row.category === 'duplicate' ? 'Duplicate — review'
-        : row.category === 'amount-difference' ? 'Amount differs'
-          : row.category === 'missing' ? (row.type === 'Only in A' ? 'Missing from File B' : 'Missing from File A')
-            : row.category === 'review' ? 'Needs review' : 'Matched';
-      const difference = row.category === 'matched' ? '0.00'
-        : row.category === 'amount-difference' && row.a?.cents !== null && row.a?.cents !== undefined && row.b?.cents !== null && row.b?.cents !== undefined
-          ? (Math.abs(row.a.cents - row.b.cents) / 100).toFixed(2) : '';
+      const aCount = aRecords.length;
+      const bCount = bRecords.length;
       return [
-        'Invoice', '', '', row.number, customerNames.join(' / ') || row.customer, status,
-        amountList(aRecords), amountList(bRecords), difference, plainExplanation(rows),
+        row.number || 'Invoice number unavailable',
+        customerNames(aRecords, bRecords, row.customer),
+        `File A: ${aCount} record${aCount === 1 ? '' : 's'} · File B: ${bCount} record${bCount === 1 ? '' : 's'}`,
+        `File A contains ${aCount} record${aCount === 1 ? '' : 's'} with this invoice number, while File B contains ${bCount}. SyncProof did not automatically match these records because duplicates make the pairing uncertain. A person needs to decide whether the repeated entry is legitimate.`,
+        'Review each source row against the original invoice and confirm whether the repeated entry is legitimate. Do not assume the records are correct just because their amounts agree.',
       ];
     });
-    const lines = [columns, ...summaryRows, ...invoiceRows].map((row) => row.map((value) => csvCell(value)).join(','));
-    downloadFile('syncproof-simple-report.csv', lines.join('\r\n'));
+    const matchedRows = matchedGroups.map(({ rows }) => {
+      const row = rows[0];
+      const a = uniqueRecords(rows, 'a')[0] ?? row.a;
+      const b = uniqueRecords(rows, 'b')[0] ?? row.b;
+      return [
+        row.number || 'Invoice number unavailable',
+        customerNames(a ? [a] : [], b ? [b] : [], row.customer),
+        reportMoney(a?.cents),
+        reportMoney(b?.cents),
+        'Invoice number, amount, and customer name agree. Invoice dates were not compared.',
+      ];
+    });
+    const reviewRows = reviewGroups.map(({ rows }) => {
+      const row = rows[0];
+      const aRecords = uniqueRecords(rows, 'a');
+      const bRecords = uniqueRecords(rows, 'b');
+      const sourceDescription = [
+        aRecords.length ? `File A: ${recordsMoney(aRecords)}` : '',
+        bRecords.length ? `File B: ${recordsMoney(bRecords)}` : '',
+      ].filter(Boolean).join(' · ') || 'Amount not available';
+      return [
+        row.number || 'Not provided',
+        customerNames(aRecords, bRecords, row.customer),
+        sourceDescription,
+        rows.map((item) => item.explanation).filter(Boolean).join(' '),
+        'Check the original source row and confirm the missing or invalid details with the responsible person before correcting any records.',
+      ];
+    });
+    const summaryCards = [
+      ['Unique invoice issues', counts.uniqueIssues, 'Distinct invoice numbers flagged'],
+      ['Successfully matched', counts.matched, 'Invoice number and amount agree'],
+      ['Amount differences', counts.amountDifferences, 'Amounts differ between files'],
+      ['Customer name differences', counts.customerNameDifferences, 'Review names for the same invoice'],
+      ['Missing invoices', counts.missingRecords, 'Found in only one file'],
+      ['Duplicate invoices', counts.duplicateInvoices, 'Repeated invoice numbers'],
+      ['Further investigation', counts.needsReview, 'Includes duplicates and customer-name differences'],
+    ];
+    const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    const reportHtml = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SyncProof — Invoice Comparison Report</title>
+  <style>
+    :root{color-scheme:light;--ink:#233630;--muted:#687870;--line:#e2e8e3;--paper:#fff;--canvas:#f4f6f2;--green:#28765e;--pale:#e8f2eb;--amber:#a86625}
+    *{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font:15px/1.55 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .page{max-width:1120px;margin:0 auto;padding:42px 28px 64px}.masthead{display:flex;align-items:center;justify-content:space-between;gap:24px;border-bottom:1px solid var(--line);padding-bottom:22px}
+    .brand{display:flex;align-items:center;gap:12px;font-weight:750;letter-spacing:-.03em;font-size:21px}.brand-mark{width:36px;height:36px;border-radius:11px;background:var(--green);color:#fff;display:grid;place-items:center;font-size:17px}
+    .report-meta{text-align:right;color:var(--muted);font-size:12px}.report-meta strong{display:block;color:var(--ink);font-size:13px;font-weight:650}
+    .hero{padding:34px 0 26px}.eyebrow{margin:0 0 7px;color:var(--green);font-size:10px;font-weight:750;letter-spacing:.14em}.hero h1{margin:0;font-size:clamp(28px,4vw,38px);line-height:1.14;letter-spacing:-.045em}.hero .lede{max-width:720px;margin:11px 0 0;color:var(--muted);font-size:15px}
+    .file-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:4px 0 18px}.file-card,.summary-panel,.report-section,.disclaimer{background:var(--paper);border:1px solid var(--line);border-radius:14px}
+    .file-card{padding:18px 20px;display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.file-label{display:block;color:var(--muted);font-size:10px;letter-spacing:.12em;font-weight:750}.file-name{margin:5px 0 0;font-weight:650;overflow-wrap:anywhere}.record-count{white-space:nowrap;color:var(--green);font-weight:750;font-size:18px}.record-count small{display:block;color:var(--muted);font-size:10px;font-weight:550;text-align:right}
+    .summary-panel{padding:20px;margin-bottom:26px}.panel-title{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:16px}.panel-title h2{margin:0;font-size:17px;letter-spacing:-.02em}.panel-title span{color:var(--muted);font-size:12px}
+    .summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.summary-item{padding:13px 14px;border-radius:10px;background:#f7f9f6;min-height:85px}.summary-item strong{display:block;color:var(--green);font-size:24px;line-height:1.1}.summary-item span{display:block;margin-top:6px;font-size:11px;font-weight:650}.summary-item small{display:block;color:var(--muted);font-size:10px;margin-top:2px}
+    .count-note{margin:15px 0 0;color:var(--muted);font-size:11px}.report-section{padding:22px;margin:18px 0}.section-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px}.section-heading h2{margin:0;font-size:19px;letter-spacing:-.025em}.section-description{margin:5px 0 0;color:var(--muted);font-size:12px}.section-count{min-width:32px;height:32px;display:grid;place-items:center;border-radius:9px;background:var(--pale);color:var(--green);font-size:13px;font-weight:750}
+    .table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:12px;min-width:600px}th{text-align:left;color:var(--muted);font-size:9px;letter-spacing:.08em;text-transform:uppercase;font-weight:750;padding:10px 11px;border-bottom:1px solid var(--line);white-space:nowrap}td{vertical-align:top;padding:12px 11px;border-bottom:1px solid #edf0ed;max-width:320px;overflow-wrap:anywhere}tbody tr:last-child td{border-bottom:0}.empty-cell{color:var(--muted);padding:16px 11px}.detail-row td{max-width:none;background:#f8faf7;padding:10px 13px 13px;border-bottom:1px solid var(--line)}.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 24px}.detail-note strong{display:block;color:var(--green);font-size:9px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px}.detail-note span{display:block;color:#46574f;font-size:11px;line-height:1.5}
+    .disclaimer{padding:17px 19px;border-left:4px solid var(--amber);margin-top:23px}.disclaimer strong{display:block;font-size:12px;margin-bottom:4px}.disclaimer p{margin:0;color:var(--muted);font-size:11px}.footer{padding-top:20px;color:var(--muted);font-size:10px;text-align:center}
+    @media(max-width:700px){.page{padding:24px 15px 38px}.masthead{align-items:flex-start}.report-meta{font-size:10px}.brand{font-size:19px}.file-summary{grid-template-columns:1fr}.file-card{padding:15px}.summary-panel{padding:16px}.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.report-section{padding:16px;margin:14px 0}.panel-title{align-items:flex-start;flex-direction:column;gap:3px}.detail-grid{grid-template-columns:1fr;gap:8px}}
+    @media print{body{background:#fff}.page{max-width:none;padding:0}.file-card,.summary-panel,.report-section,.disclaimer{break-inside:avoid;box-shadow:none}.report-section{break-inside:auto}.table-wrap{overflow:visible}table{min-width:0;font-size:9px}th,td{padding:7px}.section-heading{break-after:avoid}.footer{padding-bottom:10px}}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="masthead">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">S</span><span>SyncProof</span></div>
+      <div class="report-meta"><strong>Invoice Comparison Report</strong>Prepared ${htmlEscape(generatedAt)}</div>
+    </header>
+    <section class="hero"><p class="eyebrow">FINANCIAL RECORD REVIEW</p><h1>Invoice comparison</h1><p class="lede">A clear summary of how the two invoice exports compare. Flagged items are signals for a person to review, not a verdict on either set of records.</p></section>
+    <section class="file-summary" aria-label="Compared files">
+      <article class="file-card"><div><span class="file-label">FILE A · BUSINESS MANAGEMENT</span><p class="file-name">${htmlEscape(files.A?.fileName ?? 'File A')}</p></div><div class="record-count">${counts.fileARecords}<small>records compared</small></div></article>
+      <article class="file-card"><div><span class="file-label">FILE B · ACCOUNTING</span><p class="file-name">${htmlEscape(files.B?.fileName ?? 'File B')}</p></div><div class="record-count">${counts.fileBRecords}<small>records compared</small></div></article>
+    </section>
+    <section class="summary-panel" aria-label="Comparison summary">
+      <div class="panel-title"><h2>At a glance</h2><span>${counts.uniqueIssues} unique invoice issue${counts.uniqueIssues === 1 ? '' : 's'}</span></div>
+      <div class="summary-grid">${summaryCards.map(([label, count, detail]) => `<div class="summary-item"><strong>${count}</strong><span>${htmlEscape(String(label))}</span><small>${htmlEscape(String(detail))}</small></div>`).join('')}</div>
+      <p class="count-note">${counts.affectedSourceRows} affected source rows across both files. Category totals may overlap; each invoice issue is counted once in the unique-issue total.</p>
+    </section>
+    ${renderSection('Amount differences', 'The invoice number appears in both files, but the amounts do not agree.', ['Invoice number', 'Customer', 'File A amount', 'File B amount', 'Difference'], amountDifferenceRows, 'No amount differences were found.')}
+    ${renderSection('Customer name differences', 'Invoice numbers identify a potential pair, then customer names are checked against one another.', ['Invoice number', 'File A customer', 'File B customer', 'Invoice number', 'Amount', 'Customer name'], customerNameDifferenceRows, 'No customer name differences were found.')}
+    ${renderSection('Missing invoices', 'These invoice numbers were found in one file, but not the other.', ['Invoice number', 'Customer', 'Found in', 'Amount'], missingRows, 'No missing invoices were found.')}
+    ${renderSection('Duplicate invoices', 'Repeated invoice numbers are not automatically paired.', ['Invoice number', 'Customer', 'Records in each file'], duplicateRows, 'No duplicate invoice numbers were found.')}
+    ${renderSection('Successfully matched invoices', 'Invoice number, amount, and customer name agree in both files. Dates are shown as context only and are not compared.', ['Invoice number', 'Customer', 'File A amount', 'File B amount', 'Result'], matchedRows, 'No invoices matched in both files.')}
+    ${renderSection('Other records requiring review', 'These records could not be compared reliably because identifying information or an amount needs attention.', ['Invoice number', 'Customer', 'Amounts provided'], reviewRows, 'No other records require investigation.')}
+    <aside class="disclaimer"><strong>Important: human review is required</strong><p>SyncProof identifies differences for investigation. A flagged item does not by itself confirm an error, financial loss, or fraud. The source CSVs do not include currency metadata; dollar signs are used here for readability, so confirm the currency against the original exports.</p></aside>
+    <footer class="footer">Generated locally by SyncProof · Uploaded files are compared in this application and are not sent to external services.</footer>
+  </main>
+</body>
+</html>`;
+    downloadFile('syncproof-simple-report.html', reportHtml, 'text/html;charset=utf-8');
   };
   const loadDemo = async () => {
     const a = new File([DEMO_A], 'fictional-business-invoices.csv', { type: 'text/csv' });
@@ -467,11 +529,12 @@ function Home() {
                 <strong data-testid="value-affected-source-rows">{counts.affectedSourceRows}</strong>
                 <span className="summary-foot">individual rows across both files</span>
               </div>
-              <div className="overview-note"><FileCheck2 size={18} /><span>Unique issues count each invoice number once. Duplicate records may affect several source rows. Further investigation includes duplicates.</span></div>
+              <div className="overview-note"><FileCheck2 size={18} /><span>Each invoice issue is counted once. Category counts may overlap when an invoice has more than one difference. Customer-name differences and duplicates need human review.</span></div>
             </div>
             <div className="summary-strip" data-testid="summary-category-counts">
-              <div className="summary-item"><span className="summary-label"><CheckCircle2 size={14} /> SUCCESSFULLY MATCHED</span><strong data-testid="value-matched-count">{counts.matched}</strong><span className="summary-foot">invoice number and amount agree</span></div>
+              <div className="summary-item"><span className="summary-label"><CheckCircle2 size={14} /> SUCCESSFULLY MATCHED</span><strong data-testid="value-matched-count">{counts.matched}</strong><span className="summary-foot">invoice number, amount, and customer name agree</span></div>
               <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> AMOUNT DIFFERENCES</span><strong data-testid="value-amount-differences-count">{counts.amountDifferences}</strong><span className="summary-foot">unique invoices with different amounts</span></div>
+              <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> CUSTOMER NAME DIFFERENCES</span><strong data-testid="value-customer-name-differences-count">{counts.customerNameDifferences}</strong><span className="summary-foot">same invoice number, different customer names</span></div>
               <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> MISSING RECORDS</span><strong data-testid="value-missing-records-count">{counts.missingRecords}</strong><span className="summary-foot">present in only one file</span></div>
               <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> DUPLICATE INVOICES</span><strong data-testid="value-duplicate-invoices-count">{counts.duplicateInvoices}</strong><span className="summary-foot">unique numbers repeated in a file</span></div>
               <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> FURTHER INVESTIGATION</span><strong data-testid="value-needs-investigation-count">{counts.needsReview}</strong><span className="summary-foot">unique issues needing human review</span></div>
@@ -480,7 +543,7 @@ function Home() {
               <div className="results-count"><strong>{visibleResults.length}</strong> {visibleResults.length === 1 ? 'row' : 'rows'} <span>shown</span></div>
               <div className="control-group">
                 <label className="search-box"><Search size={15} /><input aria-label="Search results" placeholder="Search invoices" value={search} onChange={(event) => setSearch(event.target.value)} data-testid="input-search-results" />{search && <button aria-label="Clear search" onClick={() => setSearch('')} data-testid="button-clear-search"><X size={14} /></button>}</label>
-                <label className="filter-wrap"><span className="sr-only">Filter results</span><select value={filter} onChange={(event) => setFilter(event.target.value)} data-testid="select-results-filter"><option>All results</option><option>Flagged for review</option><option>Amount differs</option><option>Only in A</option><option>Only in B</option><option>Needs review</option><option>Matched</option></select><ChevronDown size={14} /></label>
+                <label className="filter-wrap"><span className="sr-only">Filter results</span><select value={filter} onChange={(event) => setFilter(event.target.value)} data-testid="select-results-filter"><option>All results</option><option>Flagged for review</option><option>Amount differs</option><option>Customer name differs</option><option>Only in A</option><option>Only in B</option><option>Needs review</option><option>Matched</option></select><ChevronDown size={14} /></label>
               </div>
             </div>
             <div className="table-shell">
@@ -490,24 +553,34 @@ function Home() {
                   <tbody>
                     {visibleResults.map((row) => <tr key={row.id} data-testid={`row-result-${row.id}`}>
                        <td><span className="invoice-id mono">{row.number || 'No invoice number'}</span><span className="source-row-context">{row.a ? `A row ${row.a.sourceIndex}` : ''}{row.a && row.b ? ' · ' : ''}{row.b ? `B row ${row.b.sourceIndex}` : ''}</span></td>
-                      <td><span className="customer-name">{row.customer}</span>{(row.dateA || row.dateB) && <span className="date-context">Dates shown as context · {row.dateA || '—'} / {row.dateB || '—'}</span>}</td>
+                       <td>{row.customerNameDifferent && row.a && row.b
+                         ? <span className="customer-name customer-name-compare"><span><b>File A</b> {row.a.customer}</span><span><b>File B</b> {row.b.customer}</span></span>
+                         : <span className="customer-name">{row.customer}</span>}
+                         {(row.dateA || row.dateB) && <span className="date-context">Dates shown as context · {row.dateA || '—'} / {row.dateB || '—'}</span>}</td>
                       <td className="money-cell mono">{row.a ? formatMoney(row.a.cents) : <span className="empty-value">Not found</span>}</td>
                       <td className="money-cell mono">{row.b ? formatMoney(row.b.cents) : <span className="empty-value">Not found</span>}</td>
                       <td><StatusPill type={row.type} id={row.id} /></td>
-                      <td className="explanation-cell">{row.explanation}</td>
+                       <td className="explanation-cell">
+                         <div className="comparison-checks" data-testid={`comparison-checks-${row.id}`}>
+                           <span><strong>Invoice number:</strong> {row.comparison.invoiceNumber}</span>
+                           <span><strong>Amount:</strong> {row.comparison.amount}</span>
+                           <span><strong>Customer name:</strong> {row.comparison.customerName}</span>
+                         </div>
+                         {explanationWithoutComparisonSummary(row.explanation)}
+                       </td>
                     </tr>)}
-                    {visibleResults.length === 0 && <tr><td colSpan={6}><div className="empty-results"><div className="empty-icon"><Search size={18} /></div><strong>{results.length ? 'No rows match this view' : 'No review items'}</strong><span>{results.length ? 'Try another search or filter.' : 'Every invoice number and amount matched.'}</span></div></td></tr>}
+                    {visibleResults.length === 0 && <tr><td colSpan={6}><div className="empty-results"><div className="empty-icon"><Search size={18} /></div><strong>{results.length ? 'No rows match this view' : 'No review items'}</strong><span>{results.length ? 'Try another search or filter.' : 'Every invoice number, amount, and customer name matched.'}</span></div></td></tr>}
                   </tbody>
                 </table>
               </div>
             </div>
-            <div className="results-footnote"><div className="footnote-mark"><HelpCircle size={15} /></div><p><strong>A flagged row is a prompt to investigate, not proof of an error or loss.</strong> Invoice number is the only matching key (trimmed and case-folded); dates are not compared. Duplicate numbers and incomplete records stay visible for review.</p></div>
+            <div className="results-footnote"><div className="footnote-mark"><HelpCircle size={15} /></div><p><strong>A flagged row is a prompt to investigate, not proof of an error, loss, or fraud.</strong> Invoice number identifies a potential pair; SyncProof then compares amounts and customer names. Dates are not compared. Duplicate numbers and incomplete records stay visible for review.</p></div>
           </section>}
 
           {!results && <section className="method-section">
             <div className="method-heading"><div className="method-heading-icon"><Fingerprint size={18} /></div><div><h2 className="display">A careful comparison, by design</h2><p>Simple rules you can inspect before you begin.</p></div></div>
             <div className="method-grid">
-              <div className="method-item"><span className="method-number">01</span><div><strong>Match on invoice number only</strong><p>Trimmed and case-folded. No fuzzy matching or guessed identities.</p></div></div>
+              <div className="method-item"><span className="method-number">01</span><div><strong>Find a potential pair by invoice number</strong><p>Trimmed and case-folded. Then compare amount and customer name—no fuzzy matching or guessed identities.</p></div></div>
               <div className="method-item"><span className="method-number">02</span><div><strong>Compare to the cent</strong><p>Amounts are compared as integer cents. Dates remain display context.</p></div></div>
               <div className="method-item"><span className="method-number">03</span><div><strong>Keep the awkward rows</strong><p>Duplicates and incomplete records are retained for human review.</p></div></div>
             </div>
