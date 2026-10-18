@@ -7,7 +7,7 @@ import NotFound from '@/pages/not-found';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 import {
   ArrowDownToLine, ArrowRight, Check, CheckCircle2, ChevronDown, CircleAlert,
-  ClipboardList, FileCheck2, FileDown, Fingerprint, HelpCircle,
+  ClipboardList, FileCheck2, FileDown, FileText, Fingerprint, HelpCircle,
   LockKeyhole, Search, ShieldCheck, Sparkles, Upload, X,
 } from 'lucide-react';
 
@@ -25,8 +25,11 @@ type RecordRow = {
 };
 type UploadData = { fileName: string; rows: RecordRow[]; count: number };
 type ResultType = 'Matched' | 'Amount differs' | 'Only in A' | 'Only in B' | 'Needs review';
+type IssueCategory = 'matched' | 'amount-difference' | 'missing' | 'duplicate' | 'review';
 type ResultRow = {
   id: string;
+  issueId: string;
+  category: IssueCategory;
   number: string;
   customer: string;
   dateA: string;
@@ -38,18 +41,19 @@ type ResultRow = {
 };
 
 const DEMO_A = `invoice_number,customer_name,invoice_date,total_amount
-INV-24031,Juniper & Slate Studio,2025-03-03,1840.00
-INV-24032,Northline Workshop,2025-03-04,625.50
-INV-24033,"Morrow, Hale & Co.",2025-03-05,2975.00
-INV-24034,Fieldwork Design Office,2025-03-06,412.80
-INV-24035,Harborlight Press,2025-03-07,960.00
-INV-24035,Harborlight Press,2025-03-08,960.00`;
+INV-1001,Juniper & Slate Studio,2025-04-01,2000.00
+INV-1002,Northline Workshop,2025-04-02,1500.00
+INV-1003,"Morrow, Hale & Co.",2025-04-03,725.00
+INV-1004,Harborlight Press,2025-04-04,960.00
+INV-1004,Harborlight Press,2025-04-05,960.00
+INV-1005,Fieldwork Design Office,2025-04-06,412.80
+INV-1007,Silver Fern Workshop,2025-04-07,325.00`;
 const DEMO_B = `invoice_number,customer_name,invoice_date,total_amount
-inv-24031,Juniper & Slate Studio,2025-03-03,1840.00
-INV-24032,Northline Workshop,2025-03-04,625.50
-INV-24033,"Morrow, Hale & Co.",2025-03-06,2795.00
-INV-24035,Harborlight Press,2025-03-09,960.00
-INV-24036,Redwood Letterpress,2025-03-10,1180.25`;
+INV-1001,Juniper & Slate Studio,2025-04-01,2000.00
+INV-1002,Northline Workshop,2025-04-02,1450.00
+INV-1004,Harborlight Press,2025-04-07,960.00
+INV-1006,Redwood Letterpress,2025-04-08,1180.25
+INV-1007,Silver Fern Workshop,2025-04-07,325.00`;
 
 function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -159,18 +163,28 @@ function compareRows(fileA: UploadData, fileB: UploadData): ResultRow[] {
   const aGroups = groups(fileA.rows);
   const bGroups = groups(fileB.rows);
   let serial = 0;
-  const push = (a: RecordRow | null, b: RecordRow | null, type: ResultType, explanation: string, number = a?.number || b?.number || '') => {
-    results.push({ id: `result-${serial++}`, number, customer: a?.customer || b?.customer || 'Customer not provided', dateA: a?.date ?? '', dateB: b?.date ?? '', a, b, type, explanation });
+  const push = (
+    a: RecordRow | null,
+    b: RecordRow | null,
+    type: ResultType,
+    category: IssueCategory,
+    issueId: string,
+    explanation: string,
+    number = a?.number || b?.number || '',
+  ) => {
+    results.push({ id: `result-${serial++}`, issueId, category, number, customer: a?.customer || b?.customer || 'Customer not provided', dateA: a?.date ?? '', dateB: b?.date ?? '', a, b, type, explanation });
   };
   const keys = new Set([...aGroups.keys(), ...bGroups.keys()]);
   for (const key of keys) {
     const as = aGroups.get(key) ?? [];
     const bs = bGroups.get(key) ?? [];
+    const issueId = `invoice:${key}`;
     if (as.length > 1 || bs.length > 1) {
       const all = [...as.map((record) => ({ side: 'A' as const, record })), ...bs.map((record) => ({ side: 'B' as const, record }))];
+      const explanation = `File A contains ${as.length} record${as.length === 1 ? '' : 's'} with invoice number ${as[0]?.number || bs[0]?.number}, while File B contains ${bs.length}. These records were not matched automatically. A person should review the source records to determine whether the duplication is legitimate. File A source rows: ${as.length ? as.map((record) => record.sourceIndex).join(', ') : 'none'}; File B source rows: ${bs.length ? bs.map((record) => record.sourceIndex).join(', ') : 'none'}.`;
       all.forEach(({ side, record }) => push(
-        side === 'A' ? record : null, side === 'B' ? record : null, 'Needs review',
-        `This invoice number appears more than once in ${as.length > 1 && bs.length > 1 ? 'both files' : as.length > 1 ? 'File A' : 'File B'}. Review each source row; duplicate keys are not matched. Source row: File ${side}, row ${record.sourceIndex}.`,
+        side === 'A' ? record : null, side === 'B' ? record : null, 'Needs review', 'duplicate', issueId,
+        `${explanation} This affected source row is File ${side}, row ${record.sourceIndex}.`,
       ));
       continue;
     }
@@ -178,19 +192,19 @@ function compareRows(fileA: UploadData, fileB: UploadData): ResultRow[] {
       const a = as[0]; const b = bs[0];
       if (a.issues.length || b.issues.length) {
         const details = [a.issues.length ? `File A: ${a.issues.join(' ')}` : '', b.issues.length ? `File B: ${b.issues.join(' ')}` : ''].filter(Boolean).join(' ');
-        push(a, b, 'Needs review', `This invoice number is present in both files, but at least one record cannot be compared reliably. File A row ${a.sourceIndex}; File B row ${b.sourceIndex}. ${details}`);
-      } else if (a.cents === b.cents) push(a, b, 'Matched', 'Invoice number and amount agree. Dates are shown as context only and were not compared.');
-      else push(a, b, 'Amount differs', `The amounts differ by ${formatMoney(Math.abs((a.cents ?? 0) - (b.cents ?? 0)))}. File A row ${a.sourceIndex}; File B row ${b.sourceIndex}. A person should review the source records; this difference alone does not establish an error or loss.`);
+        push(a, b, 'Needs review', 'review', issueId, `This invoice number is present in both files, but at least one record cannot be compared reliably. File A row ${a.sourceIndex}; File B row ${b.sourceIndex}. ${details}`);
+      } else if (a.cents === b.cents) push(a, b, 'Matched', 'matched', issueId, 'Invoice number and amount agree. Dates are shown as context only and were not compared.');
+      else push(a, b, 'Amount differs', 'amount-difference', issueId, `The amounts differ by ${formatMoney(Math.abs((a.cents ?? 0) - (b.cents ?? 0)))}. File A row ${a.sourceIndex}; File B row ${b.sourceIndex}. A person should review the source records; this difference alone does not establish an error or loss.`);
     } else {
       const record = as[0] ?? bs[0];
       if (!record) continue;
       const otherIssues = record.issues.length ? ` Also review this record: ${record.issues.join(' ')}` : '';
-      if (as.length) push(record, null, 'Only in A', `No unique invoice with this number was found in File B. File A row ${record.sourceIndex}. Check the export scope and source record.${otherIssues}`);
-      else push(null, record, 'Only in B', `No unique invoice with this number was found in File A. File B row ${record.sourceIndex}. Check the export scope and source record.${otherIssues}`);
+      if (as.length) push(record, null, 'Only in A', 'missing', issueId, `No unique invoice with this number was found in File B. File A row ${record.sourceIndex}. Check the export scope and source record.${otherIssues}`);
+      else push(null, record, 'Only in B', 'missing', issueId, `No unique invoice with this number was found in File A. File B row ${record.sourceIndex}. Check the export scope and source record.${otherIssues}`);
     }
   }
-  fileA.rows.filter((record) => !record.key).forEach((record) => push(record, null, 'Needs review', record.issues.join(' ') || 'Invoice number is missing, so this record cannot be matched reliably.'));
-  fileB.rows.filter((record) => !record.key).forEach((record) => push(null, record, 'Needs review', record.issues.join(' ') || 'Invoice number is missing, so this record cannot be matched reliably.'));
+  fileA.rows.filter((record) => !record.key).forEach((record) => push(record, null, 'Needs review', 'review', `row:A:${record.sourceIndex}`, record.issues.join(' ') || 'Invoice number is missing, so this record cannot be matched reliably.'));
+  fileB.rows.filter((record) => !record.key).forEach((record) => push(null, record, 'Needs review', 'review', `row:B:${record.sourceIndex}`, record.issues.join(' ') || 'Invoice number is missing, so this record cannot be matched reliably.'));
   return results;
 }
 
@@ -265,15 +279,33 @@ function Home() {
       return matchesFilter && (!term || `${row.number} ${row.customer} ${row.explanation} ${row.type}`.toLowerCase().includes(term));
     });
   }, [results, filter, search]);
-  const counts = useMemo(() => {
-    const all = results ?? [];
-    return {
-      compared: all.length,
-      matched: all.filter((row) => row.type === 'Matched').length,
-      flagged: all.filter((row) => row.type !== 'Matched').length,
-      needsReview: all.filter((row) => row.type === 'Needs review').length,
-    };
+  const groupedResults = useMemo(() => {
+    const groups = new Map<string, ResultRow[]>();
+    (results ?? []).forEach((row) => groups.set(row.issueId, [...(groups.get(row.issueId) ?? []), row]));
+    return Array.from(groups, ([issueId, rows]) => ({ issueId, rows }));
   }, [results]);
+  const counts = useMemo(() => {
+    const flaggedGroups = groupedResults.filter(({ rows }) => rows.some((row) => row.type !== 'Matched'));
+    const affectedSourceRows = new Set<string>();
+    flaggedGroups.forEach(({ rows }) => rows.forEach((row) => {
+      if (row.a) affectedSourceRows.add(`A:${row.a.sourceIndex}`);
+      if (row.b) affectedSourceRows.add(`B:${row.b.sourceIndex}`);
+    }));
+    return {
+      uniqueIssues: flaggedGroups.length,
+      affectedSourceRows: affectedSourceRows.size,
+      matched: groupedResults.filter(({ rows }) => rows[0]?.category === 'matched').length,
+      amountDifferences: groupedResults.filter(({ rows }) => rows[0]?.category === 'amount-difference').length,
+      missingRecords: groupedResults.filter(({ rows }) => rows[0]?.category === 'missing').length,
+      duplicateInvoices: groupedResults.filter(({ rows }) => rows[0]?.category === 'duplicate').length,
+      needsReview: groupedResults.filter(({ rows }) => rows.some((row) =>
+        row.type === 'Needs review' || Boolean(row.a?.issues.length) || Boolean(row.b?.issues.length),
+      )).length,
+      flaggedRows: (results ?? []).filter((row) => row.type !== 'Matched').length,
+      fileARecords: files.A?.count ?? 0,
+      fileBRecords: files.B?.count ?? 0,
+    };
+  }, [groupedResults, results, files]);
   const exportReport = () => {
     if (!results) return;
     const cols = ['invoice_number', 'customer_name', 'file_a_amount', 'file_b_amount', 'discrepancy_type', 'human_review_note', 'file_a_source_row', 'file_b_source_row', 'file_a_invoice_date_context', 'file_b_invoice_date_context'];
@@ -284,6 +316,67 @@ function Home() {
       row.type, row.explanation, row.a ? String(row.a.sourceIndex) : '', row.b ? String(row.b.sourceIndex) : '', row.dateA, row.dateB,
     ].map((value) => csvCell(value)).join(','));
     downloadFile('syncproof-discrepancy-review.csv', [cols.join(','), ...lines].join('\r\n'));
+  };
+  const downloadSimpleReport = () => {
+    if (!results) return;
+    const columns = ['section', 'summary_item', 'value', 'invoice_number', 'customer_name', 'result', 'file_a_amount', 'file_b_amount', 'difference', 'plain_english_explanation'];
+    const summaryRows = [
+      ['Summary', 'Files compared', `File A: ${counts.fileARecords} records; File B: ${counts.fileBRecords} records`, '', '', '', '', '', '', 'Amounts are shown in the same units as the source exports.'],
+      ['Summary', 'Successfully matched invoices', String(counts.matched), '', '', '', '', '', '', 'Invoice number and amount agree in both files.'],
+      ['Summary', 'Amount differences', String(counts.amountDifferences), '', '', '', '', '', '', 'Each invoice number is counted once.'],
+      ['Summary', 'Missing records', String(counts.missingRecords), '', '', '', '', '', '', 'Invoices found in only one file.'],
+      ['Summary', 'Duplicate invoices', String(counts.duplicateInvoices), '', '', '', '', '', '', 'Each duplicated invoice number is counted once.'],
+      ['Summary', 'Records requiring further investigation', String(counts.needsReview), '', '', '', '', '', '', 'Includes duplicate invoices; the category counts can overlap.'],
+      ['Summary', 'Unique invoice issues', String(counts.uniqueIssues), '', '', '', '', '', '', 'Each invoice number is counted once, even when multiple source rows are affected.'],
+      ['Summary', 'Affected source rows', String(counts.affectedSourceRows), '', '', '', '', '', '', 'Counts the individual File A and File B rows involved in flagged issues.'],
+      ['Summary', 'Review reminder', '', '', '', '', '', '', '', 'Flagged items need human review. They do not prove an error, financial loss, or fraud.'],
+    ];
+    const uniqueRecords = (rows: ResultRow[], side: 'a' | 'b') => {
+      const records = new Map<number, RecordRow>();
+      rows.forEach((row) => { const record = row[side]; if (record) records.set(record.sourceIndex, record); });
+      return Array.from(records.values());
+    };
+    const amountList = (records: RecordRow[]) => records.map((record) => record.cents === null ? 'Unreadable amount' : (record.cents / 100).toFixed(2)).join('; ');
+    const plainExplanation = (rows: ResultRow[]) => {
+      const row = rows[0];
+      if (!row) return '';
+      if (row.category === 'matched') return 'The invoice number and amount agree in both files. Dates are not compared.';
+      if (row.category === 'duplicate') {
+        const aCount = uniqueRecords(rows, 'a').length;
+        const bCount = uniqueRecords(rows, 'b').length;
+        return `File A contains ${aCount} record${aCount === 1 ? '' : 's'} with invoice number ${row.number}, while File B contains ${bCount}. These records were not matched automatically. A person should review them to determine whether the duplication is legitimate.`;
+      }
+      if (row.category === 'amount-difference' && row.a?.cents !== null && row.a?.cents !== undefined && row.b?.cents !== null && row.b?.cents !== undefined) {
+        const difference = Math.abs(row.a.cents - row.b.cents);
+        const higher = row.a.cents > row.b.cents ? 'File A is higher' : 'File B is higher';
+        return `File A lists ${formatMoney(row.a.cents)} and File B lists ${formatMoney(row.b.cents)}. The difference is ${formatMoney(difference)}; ${higher}. A person should compare the source records. This difference alone does not prove an error or loss.`;
+      }
+      if (row.category === 'missing') {
+        return row.type === 'Only in A'
+          ? 'This invoice appears in File A but not File B. Check that both exports cover the same period and that the invoice is recorded in both systems.'
+          : 'This invoice appears in File B but not File A. Check that both exports cover the same period and that the invoice is recorded in both systems.';
+      }
+      return `This invoice could not be compared reliably. ${row.explanation} A person should review the source records.`;
+    };
+    const invoiceRows = groupedResults.map(({ rows }) => {
+      const row = rows[0];
+      const aRecords = uniqueRecords(rows, 'a');
+      const bRecords = uniqueRecords(rows, 'b');
+      const customerNames = Array.from(new Set([...aRecords, ...bRecords].map((record) => record.customer).filter(Boolean)));
+      const status = row.category === 'duplicate' ? 'Duplicate — review'
+        : row.category === 'amount-difference' ? 'Amount differs'
+          : row.category === 'missing' ? (row.type === 'Only in A' ? 'Missing from File B' : 'Missing from File A')
+            : row.category === 'review' ? 'Needs review' : 'Matched';
+      const difference = row.category === 'matched' ? '0.00'
+        : row.category === 'amount-difference' && row.a?.cents !== null && row.a?.cents !== undefined && row.b?.cents !== null && row.b?.cents !== undefined
+          ? (Math.abs(row.a.cents - row.b.cents) / 100).toFixed(2) : '';
+      return [
+        'Invoice', '', '', row.number, customerNames.join(' / ') || row.customer, status,
+        amountList(aRecords), amountList(bRecords), difference, plainExplanation(rows),
+      ];
+    });
+    const lines = [columns, ...summaryRows, ...invoiceRows].map((row) => row.map((value) => csvCell(value)).join(','));
+    downloadFile('syncproof-simple-report.csv', lines.join('\r\n'));
   };
   const loadDemo = async () => {
     const a = new File([DEMO_A], 'fictional-business-invoices.csv', { type: 'text/csv' });
@@ -356,12 +449,32 @@ function Home() {
           </section>
 
           {results && <section className="results-section" aria-labelledby="results-heading" data-testid="section-results">
-            <div className="results-topline"><div className="section-heading results-title"><div className="section-index">02</div><div><h2 id="results-heading" className="display">Review the differences</h2><p>Signals for human review—not a verdict on either set of books.</p></div></div><button className="outline-button export-button" onClick={exportReport} disabled={counts.flagged === 0} data-testid="button-export-report"><FileDown size={16} /><span>Export review CSV</span></button></div>
-            <div className="summary-strip">
-              <div className="summary-item summary-total"><span className="summary-label">COMPARISON ROWS</span><strong data-testid="value-records-reviewed">{counts.compared}</strong><span className="summary-foot">paired and investigation rows</span></div>
-              <div className="summary-item"><span className="summary-label"><CheckCircle2 size={14} /> MATCHED</span><strong data-testid="value-matched-count">{counts.matched}</strong><span className="summary-foot">same number &amp; amount</span></div>
-              <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> FLAGGED TO REVIEW</span><strong data-testid="value-flagged-count">{counts.flagged}</strong><span className="summary-foot">{counts.needsReview} need more information</span></div>
-              <div className="summary-aside"><span className="summary-aside-mark"><FileCheck2 size={19} /></span><span>Matching invoices are counted separately from items needing review.</span></div>
+            <div className="results-topline">
+              <div className="section-heading results-title"><div className="section-index">02</div><div><h2 id="results-heading" className="display">Review the differences</h2><p>Signals for human review—not a verdict on either set of books.</p></div></div>
+              <div className="report-actions">
+                <button className="outline-button export-button simple-report-button" onClick={downloadSimpleReport} data-testid="button-download-simple-report"><FileText size={16} /><span>Download Simple Report</span></button>
+                <button className="outline-button export-button" onClick={exportReport} disabled={counts.flaggedRows === 0} data-testid="button-export-report"><FileDown size={16} /><span>Export Review CSV</span></button>
+              </div>
+            </div>
+            <div className="summary-overview">
+              <div className="overview-stat">
+                <span className="summary-label">UNIQUE INVOICE ISSUES</span>
+                <strong data-testid="value-unique-issues">{counts.uniqueIssues}</strong>
+                <span className="summary-foot">distinct invoice numbers flagged</span>
+              </div>
+              <div className="overview-stat">
+                <span className="summary-label">AFFECTED SOURCE ROWS</span>
+                <strong data-testid="value-affected-source-rows">{counts.affectedSourceRows}</strong>
+                <span className="summary-foot">individual rows across both files</span>
+              </div>
+              <div className="overview-note"><FileCheck2 size={18} /><span>Unique issues count each invoice number once. Duplicate records may affect several source rows. Further investigation includes duplicates.</span></div>
+            </div>
+            <div className="summary-strip" data-testid="summary-category-counts">
+              <div className="summary-item"><span className="summary-label"><CheckCircle2 size={14} /> SUCCESSFULLY MATCHED</span><strong data-testid="value-matched-count">{counts.matched}</strong><span className="summary-foot">invoice number and amount agree</span></div>
+              <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> AMOUNT DIFFERENCES</span><strong data-testid="value-amount-differences-count">{counts.amountDifferences}</strong><span className="summary-foot">unique invoices with different amounts</span></div>
+              <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> MISSING RECORDS</span><strong data-testid="value-missing-records-count">{counts.missingRecords}</strong><span className="summary-foot">present in only one file</span></div>
+              <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> DUPLICATE INVOICES</span><strong data-testid="value-duplicate-invoices-count">{counts.duplicateInvoices}</strong><span className="summary-foot">unique numbers repeated in a file</span></div>
+              <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> FURTHER INVESTIGATION</span><strong data-testid="value-needs-investigation-count">{counts.needsReview}</strong><span className="summary-foot">unique issues needing human review</span></div>
             </div>
             <div className="results-controls">
               <div className="results-count"><strong>{visibleResults.length}</strong> {visibleResults.length === 1 ? 'row' : 'rows'} <span>shown</span></div>
