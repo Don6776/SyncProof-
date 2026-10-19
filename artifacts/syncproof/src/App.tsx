@@ -29,13 +29,12 @@ INV-1003,"Morrow, Hale & Co.",2025-04-03,725.00
 INV-1004,Harborlight Press,2025-04-04,960.00
 INV-1004,Harborlight Press,2025-04-05,960.00
 INV-1005,Fieldwork Design Office,2025-04-06,412.80
-INV-1007,Silver Fern Workshop,2025-04-07,325.00`;
+`;
 const DEMO_B = `invoice_number,customer_name,invoice_date,total_amount
 INV-1001,Juniper & Slate Studio,2025-04-01,2000.00
 INV-1002,Northline Workshop,2025-04-02,1450.00
 INV-1004,Harborlight Press,2025-04-07,960.00
-INV-1006,Redwood Letterpress,2025-04-08,1180.25
-INV-1007,Silver Fern Workshop,2025-04-07,325.00`;
+INV-1006,Redwood Letterpress,2025-04-08,1180.25`;
 
 function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -232,9 +231,7 @@ function Home() {
       customerNameDifferences: groupedResults.filter(({ rows }) => rows.some((row) => row.customerNameDifferent)).length,
       missingRecords: groupedResults.filter(({ rows }) => rows[0]?.category === 'missing').length,
       duplicateInvoices: groupedResults.filter(({ rows }) => rows[0]?.category === 'duplicate').length,
-      needsReview: groupedResults.filter(({ rows }) => rows.some((row) =>
-        row.type === 'Needs review' || row.customerNameDifferent || Boolean(row.a?.issues.length) || Boolean(row.b?.issues.length),
-      )).length,
+      needsReview: groupedResults.filter(({ rows }) => rows[0]?.category === 'review').length,
       flaggedRows: (results ?? []).filter((row) => row.type !== 'Matched').length,
       fileARecords: files.A?.count ?? 0,
       fileBRecords: files.B?.count ?? 0,
@@ -379,12 +376,12 @@ function Home() {
     });
     const summaryCards = [
       ['Unique invoice issues', counts.uniqueIssues, 'Distinct invoice numbers flagged'],
-      ['Successfully matched', counts.matched, 'Invoice number and amount agree'],
+      ['Successfully matched', counts.matched, 'Invoice number, amount, and customer name agree'],
       ['Amount differences', counts.amountDifferences, 'Amounts differ between files'],
       ['Customer name differences', counts.customerNameDifferences, 'Review names for the same invoice'],
       ['Missing invoices', counts.missingRecords, 'Found in only one file'],
       ['Duplicate invoices', counts.duplicateInvoices, 'Repeated invoice numbers'],
-      ['Further investigation', counts.needsReview, 'Includes duplicates and customer-name differences'],
+      ['Other records requiring review', counts.needsReview, 'Could not be compared reliably'],
     ];
     const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
     const reportHtml = `<!doctype html>
@@ -537,7 +534,7 @@ function Home() {
               <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> CUSTOMER NAME DIFFERENCES</span><strong data-testid="value-customer-name-differences-count">{counts.customerNameDifferences}</strong><span className="summary-foot">same invoice number, different customer names</span></div>
               <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> MISSING RECORDS</span><strong data-testid="value-missing-records-count">{counts.missingRecords}</strong><span className="summary-foot">present in only one file</span></div>
               <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> DUPLICATE INVOICES</span><strong data-testid="value-duplicate-invoices-count">{counts.duplicateInvoices}</strong><span className="summary-foot">unique numbers repeated in a file</span></div>
-              <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> FURTHER INVESTIGATION</span><strong data-testid="value-needs-investigation-count">{counts.needsReview}</strong><span className="summary-foot">unique issues needing human review</span></div>
+              <div className="summary-item summary-attention"><span className="summary-label"><CircleAlert size={14} /> OTHER RECORDS TO REVIEW</span><strong data-testid="value-needs-investigation-count">{counts.needsReview}</strong><span className="summary-foot">could not be compared reliably</span></div>
             </div>
             <div className="results-controls">
               <div className="results-count"><strong>{visibleResults.length}</strong> {visibleResults.length === 1 ? 'row' : 'rows'} <span>shown</span></div>
