@@ -12,6 +12,9 @@ import {
 } from 'lucide-react';
 import {
   compareRows,
+  parseAmount,
+  type AmountStatus,
+  type IssueCategory,
   type RecordRow,
   type ResultRow,
   type ResultType,
@@ -79,21 +82,6 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-function parseAmount(raw: string): number | null {
-  let value = raw.trim();
-  if (!value) return null;
-  const parenthesized = /^\(.*\)$/.test(value);
-  if (parenthesized) value = value.slice(1, -1).trim();
-  const negative = parenthesized || value.startsWith('-');
-  if (value.startsWith('-')) value = value.slice(1);
-  value = value.replace(/^\$\s*/, '');
-  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(value)) return null;
-  value = value.replace(/,/g, '');
-  const [whole, decimal = ''] = value.split('.');
-  const cents = Number(whole) * 100 + Number(decimal.padEnd(2, '0'));
-  return Number.isSafeInteger(cents) ? (negative ? -cents : cents) : null;
-}
-
 function parseFile(text: string): RecordRow[] {
   const parsed = parseCsv(text);
   const headers = parsed[0].map((header) => header.trim().toLowerCase());
@@ -104,14 +92,16 @@ function parseFile(text: string): RecordRow[] {
     const number = (cells[positions.invoice_number] ?? '').trim();
     const customer = (cells[positions.customer_name] ?? '').trim();
     const date = (cells[positions.invoice_date] ?? '').trim();
-    const amountText = (cells[positions.total_amount] ?? '').trim();
+    const amountText = cells[positions.total_amount] ?? '';
     const cents = parseAmount(amountText);
+    const amountStatus: AmountStatus = !amountText.trim() ? 'blank' : cents === null ? 'invalid' : 'valid';
     const issues: string[] = [];
     if (cells.length !== parsed[0].length) issues.push(`This row has ${cells.length} fields, but the header defines ${parsed[0].length} columns. Check the CSV row.`);
     if (!number) issues.push('Invoice number is missing, so this record cannot be matched reliably.');
     if (!customer) issues.push('Customer name is missing. Confirm the source record.');
-    if (cents === null) issues.push('Amount is missing or not a valid amount with up to two decimal places.');
-    return { number, key: number.toLowerCase(), customer, date, cents, issues, sourceIndex: index + 2 };
+    if (amountStatus === 'blank') issues.push('The total_amount value is blank. Enter or verify a numeric amount before relying on the comparison.');
+    if (amountStatus === 'invalid') issues.push(`The total_amount value "${amountText}" is not a valid numeric or supported currency amount. Correct or verify it before relying on the comparison.`);
+    return { number, key: number.toLowerCase(), customer, date, amountText, amountStatus, cents, issues, sourceIndex: index + 2 };
   });
 }
 
@@ -231,19 +221,33 @@ function Home() {
       customerNameDifferences: groupedResults.filter(({ rows }) => rows.some((row) => row.customerNameDifferent)).length,
       missingRecords: groupedResults.filter(({ rows }) => rows[0]?.category === 'missing').length,
       duplicateInvoices: groupedResults.filter(({ rows }) => rows[0]?.category === 'duplicate').length,
-      needsReview: groupedResults.filter(({ rows }) => rows[0]?.category === 'review').length,
+      needsReview: groupedResults.filter(({ rows }) => rows.some((row) =>
+        row.category === 'review' || row.additionalCategories.includes('review'),
+      )).length,
       flaggedRows: (results ?? []).filter((row) => row.type !== 'Matched').length,
       fileARecords: files.A?.count ?? 0,
       fileBRecords: files.B?.count ?? 0,
     };
   }, [groupedResults, results, files]);
+  const amountCell = (record: RecordRow | null): ReactNode => {
+    if (!record) return <span className="empty-value">Not found</span>;
+    if (record.amountStatus === 'blank') return <span className="invalid-amount-value">Blank amount</span>;
+    if (record.amountStatus === 'invalid') {
+      return <span className="invalid-amount-value" title="Original total_amount value">{`Invalid: ${record.amountText}`}</span>;
+    }
+    return formatMoney(record.cents);
+  };
   const exportReport = () => {
     if (!results) return;
     const cols = ['invoice_number', 'customer_name', 'file_a_amount', 'file_b_amount', 'discrepancy_type', 'human_review_note', 'file_a_source_row', 'file_b_source_row', 'file_a_invoice_date_context', 'file_b_invoice_date_context'];
     const flagged = results.filter((row) => row.type !== 'Matched');
-    const amountForCsv = (cents: number | null) => cents === null ? '' : (cents / 100).toFixed(2);
+    const amountForCsv = (record: RecordRow | null) => {
+      if (!record) return '';
+      if (record.amountStatus !== 'valid') return record.amountText;
+      return record.cents === null ? '' : (record.cents / 100).toFixed(2);
+    };
     const lines = flagged.map((row) => [
-      row.number, row.customerNameDifferent && row.a && row.b ? `File A: ${row.a.customer}; File B: ${row.b.customer}` : row.customer, row.a ? amountForCsv(row.a.cents) : '', row.b ? amountForCsv(row.b.cents) : '',
+      row.number, row.customerNameDifferent && row.a && row.b ? `File A: ${row.a.customer}; File B: ${row.b.customer}` : row.customer, amountForCsv(row.a), amountForCsv(row.b),
       row.type, row.explanation, row.a ? String(row.a.sourceIndex) : '', row.b ? String(row.b.sourceIndex) : '', row.dateA, row.dateB,
     ].map((value) => csvCell(value)).join(','));
     downloadFile('syncproof-discrepancy-review.csv', [cols.join(','), ...lines].join('\r\n'));
@@ -256,16 +260,24 @@ function Home() {
       return Array.from(records.values());
     };
     const reportMoney = (cents: number | null | undefined) => cents === null || cents === undefined ? 'Not provided or unreadable' : `$${formatMoney(cents)}`;
-    const recordsMoney = (records: RecordRow[]) => records.length ? records.map((record) => reportMoney(record.cents)).join('; ') : '—';
+    const reportAmount = (record: RecordRow) => {
+      if (record.amountStatus === 'blank') return 'Blank total_amount';
+      if (record.amountStatus === 'invalid') return `Invalid original value: "${record.amountText}"`;
+      return reportMoney(record.cents);
+    };
+    const recordsMoney = (records: RecordRow[]) => records.length ? records.map(reportAmount).join('; ') : '—';
     const customerNames = (aRecords: RecordRow[], bRecords: RecordRow[], fallback: string) =>
       Array.from(new Set([...aRecords, ...bRecords].map((record) => record.customer).filter(Boolean))).join(' / ') || fallback || 'Customer not provided';
     const reportGroups = groupedResults.map(({ issueId, rows }) => ({ issueId, rows, result: rows[0] })).filter((group) => group.result);
-    const amountDifferenceGroups = reportGroups.filter(({ result }) => result?.category === 'amount-difference');
+    const hasCategory = (rows: ResultRow[], category: IssueCategory) => rows.some((row) =>
+      row.category === category || row.additionalCategories.includes(category),
+    );
+    const amountDifferenceGroups = reportGroups.filter(({ rows }) => hasCategory(rows, 'amount-difference'));
     const customerNameDifferenceGroups = reportGroups.filter(({ rows }) => rows.some((row) => row.customerNameDifferent));
-    const missingGroups = reportGroups.filter(({ result }) => result?.category === 'missing');
-    const duplicateGroups = reportGroups.filter(({ result }) => result?.category === 'duplicate');
+    const missingGroups = reportGroups.filter(({ rows }) => hasCategory(rows, 'missing'));
+    const duplicateGroups = reportGroups.filter(({ rows }) => hasCategory(rows, 'duplicate'));
     const matchedGroups = reportGroups.filter(({ result }) => result?.category === 'matched');
-    const reviewGroups = reportGroups.filter(({ result }) => result?.category === 'review');
+    const reviewGroups = reportGroups.filter(({ rows }) => hasCategory(rows, 'review'));
 
     const renderTable = (headers: string[], rows: string[][], emptyMessage: string) => `
       <div class="table-wrap"><table><thead><tr>${headers.map((header) => `<th>${htmlEscape(header)}</th>`).join('')}</tr></thead>
@@ -554,8 +566,8 @@ function Home() {
                          ? <span className="customer-name customer-name-compare"><span><b>File A</b> {row.a.customer}</span><span><b>File B</b> {row.b.customer}</span></span>
                          : <span className="customer-name">{row.customer}</span>}
                          {(row.dateA || row.dateB) && <span className="date-context">Dates shown as context · {row.dateA || '—'} / {row.dateB || '—'}</span>}</td>
-                      <td className="money-cell mono">{row.a ? formatMoney(row.a.cents) : <span className="empty-value">Not found</span>}</td>
-                      <td className="money-cell mono">{row.b ? formatMoney(row.b.cents) : <span className="empty-value">Not found</span>}</td>
+                       <td className="money-cell mono">{amountCell(row.a)}</td>
+                       <td className="money-cell mono">{amountCell(row.b)}</td>
                       <td><StatusPill type={row.type} id={row.id} /></td>
                        <td className="explanation-cell">
                          <div className="comparison-checks" data-testid={`comparison-checks-${row.id}`}>
