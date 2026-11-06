@@ -149,7 +149,7 @@ export function compareRows(fileA: UploadData, fileB: UploadData): ResultRow[] {
       const explanation = `File A contains ${as.length} record${as.length === 1 ? '' : 's'} with invoice number ${as[0]?.number || bs[0]?.number}, while File B contains ${bs.length}. These records were not matched automatically. A person should review the source records to determine whether the duplication is legitimate. File A source rows: ${as.length ? as.map((record) => record.sourceIndex).join(', ') : 'none'}; File B source rows: ${bs.length ? bs.map((record) => record.sourceIndex).join(', ') : 'none'}.`;
       all.forEach(({ side, record }) => {
         const sourceDetails = recordIssueDetails(record, side);
-        const additionalCategories = record.issues.length || record.amountStatus !== 'valid' ? ['review'] : [];
+        const additionalCategories: IssueCategory[] = record.issues.length || record.amountStatus !== 'valid' ? ['review'] : [];
         push(
           side === 'A' ? record : null, side === 'B' ? record : null, 'Needs review', 'duplicate', issueId,
           `${explanation} This affected source row is File ${side}, row ${record.sourceIndex}.${sourceDetails ? ` ${sourceDetails}` : ''}`,

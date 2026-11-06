@@ -1,9 +1,11 @@
-import { type ChangeEvent, type DragEvent, type ReactNode, useMemo, useState } from 'react';
+import { type ChangeEvent, type DragEvent, type ReactNode, useMemo, useState, useSyncExternalStore } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
+import LandingPage from '@/pages/LandingPage';
+import WaitlistPage from '@/pages/WaitlistPage';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 import {
   ArrowDownToLine, ArrowRight, Check, CheckCircle2, ChevronDown, CircleAlert,
@@ -129,11 +131,41 @@ function demoDownload(side: Side) {
   downloadFile(side === 'A' ? 'syncproof-fictional-business-invoices.csv' : 'syncproof-fictional-accounting-invoices.csv', side === 'A' ? DEMO_A : DEMO_B);
 }
 
+const subscribeToNormalizedLocation = (callback: () => void) => {
+  const events = ['popstate', 'pushState', 'replaceState', 'hashchange'];
+  events.forEach((event) => window.addEventListener(event, callback));
+  return () => events.forEach((event) => window.removeEventListener(event, callback));
+};
+
+const getNormalizedPathname = () => {
+  const pathname = window.location.pathname;
+  const wrapped = pathname.match(/^\/https?:\/[^/]+(\/.*)?$/);
+  return wrapped ? wrapped[1] || '/' : pathname;
+};
+
+function useNormalizedLocation() {
+  const pathname = useSyncExternalStore(
+    subscribeToNormalizedLocation,
+    getNormalizedPathname,
+    () => '/'
+  );
+
+  const navigate = (to: string, options?: { replace?: boolean; state?: unknown }) => {
+    window.history[options?.replace ? 'replaceState' : 'pushState'](
+      options?.state ?? null,
+      '',
+      to
+    );
+  };
+
+  return [pathname, navigate] as [string, (to: string, options?: { replace?: boolean; state?: unknown }) => void];
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+        <WouterRouter hook={useNormalizedLocation} base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Router />
         </WouterRouter>
         <Toaster />
@@ -143,8 +175,19 @@ function App() {
 }
 
 function Router() {
-  return <RoutedErrorBoundary><Switch><Route path="/" component={Home} /><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
+  const [location] = useLocation();
+  return (
+    <div>
+      <Switch>
+        <Route path="/" component={LandingPage} />
+        <Route path="/apply" component={WaitlistPage} />
+        <Route path="/app" component={Home} />
+        <Route component={NotFound} />
+      </Switch>
+    </div>
+  );
 }
+
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
