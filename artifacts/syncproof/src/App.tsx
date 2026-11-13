@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import LandingPage from '@/pages/LandingPage';
 import WaitlistPage from '@/pages/WaitlistPage';
+import AdminPage from '@/pages/AdminPage';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 import {
   ArrowDownToLine, ArrowRight, Check, CheckCircle2, ChevronDown, CircleAlert,
@@ -182,6 +183,7 @@ function Router() {
         <Route path="/" component={LandingPage} />
         <Route path="/apply" component={WaitlistPage} />
         <Route path="/app" component={Home} />
+        <Route path="/admin" component={AdminPage} />
         <Route component={NotFound} />
       </Switch>
     </div>
