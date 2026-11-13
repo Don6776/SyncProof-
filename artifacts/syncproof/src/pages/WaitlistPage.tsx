@@ -34,7 +34,7 @@ export default function WaitlistPage() {
     setSubmitting(true);
 
     try {
-      const response = await fetch('https://syncproof-api.vercel.app/api/waitlist/', {
+      const response = await fetch('https://syncproof-api.vercel.app/api/waitlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
