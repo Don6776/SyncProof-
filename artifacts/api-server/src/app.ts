@@ -4,8 +4,13 @@ import router from "./routes/index.js";
 
 const app: Express = express();
 
+app.use(
+  cors({
+    origin: "https://sync-proof.vercel.app",
+    credentials: true,
+  }),
+);
 
-app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
