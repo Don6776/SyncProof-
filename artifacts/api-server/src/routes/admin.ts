@@ -213,4 +213,55 @@ router.patch("/applications/:id/status", requireAdmin, async (req, res) => {
   }
 });
 
+
+router.patch("/applications/:id/onboarding", requireAdmin, async (req, res) => {
+  const rawId = req.params.id;
+  const id = Array.isArray(rawId) ? rawId[0] : rawId;
+  const onboardingStatus = req.body?.onboardingStatus;
+
+  const allowedStatuses = [
+    "not_contacted",
+    "contacted",
+    "onboarding_scheduled",
+    "testing_v1",
+    "feedback_received",
+    "completed",
+  ];
+
+  if (
+    !id ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+  ) {
+    return res.status(400).json({ error: "Invalid application ID." });
+  }
+
+  if (!allowedStatuses.includes(onboardingStatus)) {
+    return res.status(400).json({ error: "Invalid onboarding status." });
+  }
+
+  try {
+    const [application] = await db
+      .update(waitlistApplications)
+      .set({
+        onboardingStatus,
+        updatedAt: new Date(),
+      })
+      .where(eq(waitlistApplications.id, id))
+      .returning({
+        id: waitlistApplications.id,
+        onboardingStatus: waitlistApplications.onboardingStatus,
+      });
+
+    if (!application) {
+      return res.status(404).json({ error: "Application not found." });
+    }
+
+    return res.json({ application });
+  } catch {
+    return res.status(500).json({
+      error: "Could not update onboarding status.",
+    });
+  }
+});
+
 export default router;

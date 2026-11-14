@@ -2,6 +2,14 @@ import { useEffect, useState, type FormEvent } from "react";
 
 const API = "https://syncproof-api.vercel.app/api/admin";
 
+type OnboardingStatus =
+  | "not_contacted"
+  | "contacted"
+  | "onboarding_scheduled"
+  | "testing_v1"
+  | "feedback_received"
+  | "completed";
+
 type Application = {
   id: string;
   name: string;
@@ -10,6 +18,7 @@ type Application = {
   reconciliationMethod: string;
   monthlyInvoiceVolume: string;
   status: "pending" | "approved" | "rejected";
+  onboardingStatus: OnboardingStatus;
   createdAt: string;
 };
 
@@ -121,6 +130,43 @@ export default function AdminPage() {
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Update failed.");
+    }
+  }
+
+  async function updateOnboardingStatus(
+    id: string,
+    onboardingStatus: OnboardingStatus,
+  ) {
+    setError("");
+
+    try {
+      const response = await fetch(`${API}/applications/${id}/onboarding`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ onboardingStatus }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not update onboarding status.");
+      }
+
+      setApplications((current) =>
+        current.map((application) =>
+          application.id === id
+            ? {
+                ...application,
+                onboardingStatus: data.application.onboardingStatus,
+              }
+            : application,
+        ),
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Onboarding update failed.",
+      );
     }
   }
 
@@ -274,6 +320,7 @@ export default function AdminPage() {
                     <th className="px-5 py-4">Monthly volume</th>
                     <th className="px-5 py-4">Date</th>
                     <th className="px-5 py-4">Status</th>
+                    <th className="px-5 py-4">Onboarding</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -314,6 +361,26 @@ export default function AdminPage() {
                           <option value="pending">Pending</option>
                           <option value="approved">Approved</option>
                           <option value="rejected">Rejected</option>
+                        </select>
+                      </td>
+                      <td className="px-5 py-4">
+                        <select
+                          value={application.onboardingStatus || "not_contacted"}
+                          disabled={application.status !== "approved"}
+                          onChange={(event) =>
+                            updateOnboardingStatus(
+                              application.id,
+                              event.target.value as OnboardingStatus,
+                            )
+                          }
+                          className="rounded-lg border border-white/15 bg-[#080d18] px-3 py-2 text-white outline-none disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <option value="not_contacted">Not contacted</option>
+                          <option value="contacted">Contacted</option>
+                          <option value="onboarding_scheduled">Onboarding scheduled</option>
+                          <option value="testing_v1">Testing V1</option>
+                          <option value="feedback_received">Feedback received</option>
+                          <option value="completed">Completed</option>
                         </select>
                       </td>
                     </tr>

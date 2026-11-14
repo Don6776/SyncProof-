@@ -14,6 +14,15 @@ export const waitlistStatusEnum = pgEnum("waitlist_status", [
   "rejected",
 ]);
 
+export const onboardingStatusEnum = pgEnum("onboarding_status", [
+  "not_contacted",
+  "contacted",
+  "onboarding_scheduled",
+  "testing_v1",
+  "feedback_received",
+  "completed",
+]);
+
 export const waitlistApplications = pgTable(
   "waitlist_applications",
   {
@@ -29,6 +38,10 @@ export const waitlistApplications = pgTable(
     }).notNull(),
 
     status: waitlistStatusEnum("status").default("pending").notNull(),
+
+    onboardingStatus: onboardingStatusEnum("onboarding_status")
+      .default("not_contacted")
+      .notNull(),
 
     createdAt: timestamp("created_at", {
       withTimezone: true,
